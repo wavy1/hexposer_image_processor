@@ -18,6 +18,7 @@ int max_line_gap = 15;
 int line_sensitivity_threshold = 10;
 int hexagon_max_box_area = 10000;
 int hexagon_min_box_area = 5500;
+int unti_length = 80;
 
 int const sensitivity_max = 255;
 int const hexagon_area_slider_max_ = 100000;
@@ -42,8 +43,9 @@ float euclideanDist(cv::Point2f &p, cv::Point2f &q);
 
 int main(int argc, char **argv) {
     VideoCapture cap(cameraNo); // open the default camera
-    if (!cap.isOpened())  // check if we succeeded
+    if (!cap.isOpened()){
         return -1;
+    }  // check if we succeeded
     setupGUI();
 
     for (;;) {
@@ -77,6 +79,7 @@ void setupGUI() {
                    boundingBoxes_callback);
     createTrackbar("Area Max", srcWindowName, &hexagon_max_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
     createTrackbar("Area Min", srcWindowName, &hexagon_min_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
+    createTrackbar("Unit length", srcWindowName, &unti_length, sensitivity_max, nullptr);
 
 }
 
@@ -126,17 +129,20 @@ void detectLines() {
     int hexagonCount = 0;
     bool isHexagonCounted = false;
     vector<Vec4i> linesP; // will hold the results of the detection
-    HoughLinesP(dst, linesP, 1, CV_PI / 180, line_sensitivity_threshold, min_line_length,
+    HoughLinesP(dst, linesP, 30, CV_PI / 180, line_sensitivity_threshold, min_line_length,
                 max_line_gap); // runs the actual detection
     cdstP = cdst.clone();
 
+    string print = "";
     // Draw the lines
     for (size_t j = 0; j < minRect.size(); j++) {
 
         Point2f rect_points[4];
         minRect[j].points(rect_points);
 
-        float boxArea = (euclideanDist(rect_points[0], rect_points[1]) * euclideanDist(rect_points[2], rect_points[3]));
+        float edge1 = euclideanDist(rect_points[0], rect_points[1]);
+        float edge2 = euclideanDist(rect_points[1], rect_points[2]);
+        float boxArea = edge1 * edge2;
         if (boxArea < hexagon_max_box_area && boxArea > hexagon_min_box_area) {
             for (size_t i = 0; i < linesP.size(); i++) {
                 Vec4i l = linesP[i];
@@ -144,6 +150,14 @@ void detectLines() {
                     line(cdstP, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 3, LINE_AA);
                     if(!isHexagonCounted){
                         hexagonCount++;
+                        print.append(to_string(hexagonCount) + " Box size: " + to_string(boxArea) + " Edge1: " + to_string(edge1) + " Edge2: " + to_string(edge2));
+                        if((edge1 / unti_length > 1) xor (edge2 / unti_length > 1)){
+                            print.append(" Hex per Box: " + to_string(2) + "\n");
+                        } else if((edge1 / unti_length > 1) and (edge2 / unti_length > 1)){
+                            print.append(" Hex per Box: " + to_string(3) + "\n");
+                        } else {
+                            print.append(" Hex per Box: " + to_string(1) + "\n");
+                        }
                         isHexagonCounted = true;
                     }
                 }
@@ -151,7 +165,7 @@ void detectLines() {
         }
         isHexagonCounted = false;
     }
-    cout << hexagonCount << endl;
+    cout << print << endl;
     namedWindow("only edges", WINDOW_AUTOSIZE);
     imshow("Detected Lines (in red) - Probabilistic Line Transform", cdstP);
 }
