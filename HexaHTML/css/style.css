@@ -76,9 +76,9 @@ body {
     height: 100%;    
 }
 .main-right {
-    position: absolute;
-    right: 0;
-    bottom: 0;
+    position: fixed;
+    right: 100px;
+    bottom: 100px;
 }
 h1 {
     font-size: 3.5em;
