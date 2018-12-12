@@ -8,6 +8,7 @@
 
 #include <opencv2/core/types.hpp>
 #include <thread>
+#include "Hexagon.h"
 
 class ImageProcessor{
 public:
@@ -15,7 +16,7 @@ public:
     void detectLines();
     bool detectEdges();
     int run();
-    static int rectanglesCount;
+    static std::vector<Hexagon> ImageProcessor::statistics;
 };
 
 
