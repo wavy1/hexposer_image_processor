@@ -106,6 +106,12 @@ void ImageProcessor::detectLines() {
     cdstP = cdst.clone();
 
     string print = "";
+    Scalar color;
+    int red;
+    int blue;
+    int green;
+    int sum;
+
     // Draw the lines
     for (size_t j = 0; j < minRect.size(); j++) {
 
@@ -122,7 +128,29 @@ void ImageProcessor::detectLines() {
                 if (minRect[j].boundingRect().contains(Point(l[0], l[1]))) {
                     line(cdstP, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 3, LINE_AA);
                     if(!isHexagonCounted){
-                        Hexagon hexagon(static_cast<int>(minRect[j].center.x), static_cast<int>(minRect[j].center.y), "red");
+                        red = 0;
+                        blue = 0;
+                        green = 0;
+                        sum = 0;
+                        for(int y = 0; y < edge1; y++){
+                            for(int x = 0; x < edge2; x++){
+                                Vec3b pixel = src.at<Vec3b>(y,x);
+                                red += pixel[2];
+                                green += pixel[1];
+                                blue += pixel[0];
+                                sum++;
+                            }
+                        }
+
+                        red = red / sum;
+                        blue = blue / sum;
+                        green = green / sum;
+
+                        std::stringstream stream;
+                        stream << std::hex << red << std::hex << blue << std::hex << green;
+
+
+                        Hexagon hexagon(static_cast<int>(minRect[j].center.x), static_cast<int>(minRect[j].center.y), stream.str());
                         hexagons.push_back(hexagon);
                         print.append(to_string(statistics.size()) + " Box size: " + to_string(boxArea) + " Edge1: " + to_string(edge1) + " Edge2: " + to_string(edge2));
                         if((edge1 / unti_length > 1)^(edge2 / unti_length > 1)){
