@@ -7,19 +7,8 @@
 #include "ImageProcessor.cpp"
 #include "nlohmann/json.hpp"
 
-ImageProcessor *imageProcessor;
-
-void thread_function() {
-    *imageProcessor = ImageProcessor();
-    imageProcessor->run();
-}
 int main(int argc, char **argv) {
-
-
-    std::thread threadObj(thread_function);
-
-    std::vector<Hexagon> hexas;
-    while (true) {
-    }
+    ImageProcessor imageProcessor = ImageProcessor();
+    imageProcessor.run();
     return 0;
 }

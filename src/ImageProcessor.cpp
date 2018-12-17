@@ -3,7 +3,6 @@
 //
 
 #include "ImageProcessor.h"
-
 #include <iostream>
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/highgui.hpp"
@@ -14,9 +13,9 @@ using namespace cv;
 using namespace std;
 
 // Declare the output variables
-cv::Mat dst, cdst, cdstP, src, src_gray, firstFrame;
+cv::Mat dst, cdst, cdstP, src, src_gray;
 
-const int cameraNo = 1;
+const int cameraNo = 0;
 const int sensitivity_max = 255;
 const int hexagon_area_slider_max_ = 100000;
 
@@ -31,49 +30,46 @@ int max_line_gap = 15;
 int line_sensitivity_threshold = 10;
 int unti_length = 80;
 
-std::vector<Hexagon> ImageProcessor::statistics = std::vector<Hexagon>();
+const char *const contour_window = "Contours";
+const char *const source_window = "Source";
+const char *const parameter_window = "Parameters";
+const char *const lines_window = "Detected Lines (in red) - Probabilistic Line Transform";
+
 
 vector<RotatedRect> minRect;
-
-
-const string srcWindowName = "Source Window";
-int frameRate = 26;
+int frameRate = 10;
 
 void writeHexagonFile(std::vector<Hexagon> data);
 void boundingBoxes_callback(int, void *);
 
 void ImageProcessor::setupGUI() {
-    namedWindow(srcWindowName, WINDOW_FREERATIO);
-    createTrackbar("Line Sensitivity Threshold", srcWindowName, &line_sensitivity_threshold, sensitivity_max, nullptr);
-    createTrackbar("Max Line Gap", srcWindowName, &max_line_gap, sensitivity_max, nullptr);
-    createTrackbar("Min Line Length", srcWindowName, &min_line_length, sensitivity_max, nullptr);
-    createTrackbar("Box Sensitivity:", srcWindowName, &box_sensitivity_threshold, box_sensitivity_threshold_max,
+    namedWindow(parameter_window, WINDOW_FREERATIO);
+    namedWindow(contour_window, WINDOW_AUTOSIZE);
+    namedWindow(lines_window, WINDOW_AUTOSIZE);
+    createTrackbar("Line Sensitivity Threshold", parameter_window, &line_sensitivity_threshold, sensitivity_max, nullptr);
+    createTrackbar("Max Line Gap", parameter_window, &max_line_gap, sensitivity_max, nullptr);
+    createTrackbar("Min Line Length", parameter_window, &min_line_length, sensitivity_max, nullptr);
+    createTrackbar("Box Sensitivity:", parameter_window, &box_sensitivity_threshold, box_sensitivity_threshold_max,
                    boundingBoxes_callback);
-    createTrackbar("Area Max", srcWindowName, &hexagon_max_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
-    createTrackbar("Area Min", srcWindowName, &hexagon_min_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
-    createTrackbar("Unit length", srcWindowName, &unti_length, sensitivity_max, nullptr);
-}
-
-nlohmann::json testJson() {
-    Hexagon hex1(128, 64, "red");
-    Hexagon hex2(192, 64, "blue");
-    Hexagon hex3(192, 32, "green");
-    nlohmann::json hexaas = nlohmann::json::array({hex1.toJSON(), hex2.toJSON(), hex3.toJSON()});
-    return hexaas;
+    createTrackbar("Area Max", parameter_window, &hexagon_max_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
+    createTrackbar("Area Min", parameter_window, &hexagon_min_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
+    createTrackbar("Unit length", parameter_window, &unti_length, sensitivity_max, nullptr);
 }
 
 
 void writeHexagonFile(std::vector<Hexagon> data){
-    nlohmann::json jsonObjects = nlohmann::json::array();
+    nlohmann::json hexagons = nlohmann::json();
     for(int i = 0; i < data.size(); i++) {
-        jsonObjects.push_back(data.at(i).toJSON());
+        hexagons.push_back(data.at(i).toJSON());
     }
+    nlohmann::json json = nlohmann::json();
+    json["hexagons"] = hexagons;
     std::string print = "";
-    print.append("../../hexposer_server/pretty");
+    print.append("./pretty");
     print.append(std::to_string(0));
     print.append(".json");
     std::ofstream o(print);
-    o << jsonObjects << std::endl;
+    o << json << std::endl;
     o.close();
 }
 
@@ -85,15 +81,9 @@ bool ImageProcessor::detectEdges() {
     cvtColor(src, src_gray, COLOR_BGR2GRAY);
     blur(src_gray, src_gray, Size(3, 3));
 
-
     // Copy edges to the images that will display the results in BGR
     // Probabilistic Line Transform
     cvtColor(dst, cdst, COLOR_GRAY2BGR);
-
-
-    namedWindow("only edges", WINDOW_AUTOSIZE);
-    imshow("only edges", cdst);
-
     return true;
 }
 
@@ -131,10 +121,12 @@ void ImageProcessor::detectLines() {
                         red = 0;
                         blue = 0;
                         green = 0;
-                        sum = 0;
+                        /*
+                         sum = 0;
                         for(int y = 0; y < edge1; y++){
                             for(int x = 0; x < edge2; x++){
-                                Vec3b pixel = src.at<Vec3b>(y,x);
+                                Vec3b pixel = src.at<Vec3b>(static_cast<int>(y + minRect[j].center.y - edge1 / 2),
+                                                            static_cast<int>(x + minRect[j].center.x - edge2 / 2));
                                 red += pixel[2];
                                 green += pixel[1];
                                 blue += pixel[0];
@@ -145,21 +137,11 @@ void ImageProcessor::detectLines() {
                         red = red / sum;
                         blue = blue / sum;
                         green = green / sum;
-
+                         */
                         std::stringstream stream;
                         stream << std::hex << red << std::hex << blue << std::hex << green;
-
-
                         Hexagon hexagon(static_cast<int>(minRect[j].center.x), static_cast<int>(minRect[j].center.y), stream.str());
                         hexagons.push_back(hexagon);
-                        print.append(to_string(statistics.size()) + " Box size: " + to_string(boxArea) + " Edge1: " + to_string(edge1) + " Edge2: " + to_string(edge2));
-                        if((edge1 / unti_length > 1)^(edge2 / unti_length > 1)){
-                            print.append(" Hex per Box: " + to_string(2) + "\n");
-                        } else if((edge1 / unti_length > 1)^(edge2 / unti_length > 1)){
-                            print.append(" Hex per Box: " + to_string(3) + "\n");
-                        } else {
-                            print.append(" Hex per Box: " + to_string(1) + "\n");
-                        }
                         isHexagonCounted = true;
                     }
                 }
@@ -167,12 +149,8 @@ void ImageProcessor::detectLines() {
         }
         isHexagonCounted = false;
     }
-    ImageProcessor::statistics = hexagons;
-
-    cout << print << endl;
     writeHexagonFile(hexagons);
-    cv::namedWindow("only edges", WINDOW_AUTOSIZE);
-    cv::imshow("Detected Lines (in red) - Probabilistic Line Transform", cdstP);
+    cv::imshow(lines_window, cdstP);
 }
 
 void boundingBoxes_callback(int, void *) {
@@ -207,8 +185,7 @@ void boundingBoxes_callback(int, void *) {
             }
         }
     }
-    namedWindow("Contours", WINDOW_AUTOSIZE);
-    imshow("Contours", drawing);
+    imshow(contour_window, drawing);
 }
 
 int ImageProcessor::run(){
@@ -221,7 +198,9 @@ int ImageProcessor::run(){
     for (;;) {
         cap >> src;
         // Show results
-        imshow(srcWindowName, src);
+        namedWindow(source_window, WINDOW_AUTOSIZE);
+        imshow(source_window, src);
+
         if(ImageProcessor::detectEdges()){
             ImageProcessor::detectLines();
         }

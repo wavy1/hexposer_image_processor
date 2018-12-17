@@ -5,7 +5,6 @@
 #ifndef HEXAPOSER_IMAGEPROCESSOR_H
 #define HEXAPOSER_IMAGEPROCESSOR_H
 
-
 #include <opencv2/core/types.hpp>
 #include <thread>
 #include "Hexagon.h"
@@ -16,7 +15,6 @@ public:
     void detectLines();
     bool detectEdges();
     int run();
-    static std::vector<Hexagon> ImageProcessor::statistics;
 };
 
 

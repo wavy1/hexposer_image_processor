@@ -36,10 +36,9 @@ Hexagon::Hexagon(int x, int y, const std::string &color) : x(x), y(y), color(col
 
 nlohmann::json Hexagon::toJSON() {
     nlohmann::json hex = {
-            "hexagon", {
                     {"color", color},
                     {"posX", x},
-                    {"posY", y}}
+                    {"posY", y}
     };
     return hex;
 }
