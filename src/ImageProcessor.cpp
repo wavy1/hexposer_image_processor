@@ -13,53 +13,69 @@ using namespace cv;
 using namespace std;
 
 // Declare the output variables
-cv::Mat dst, cdst, cdstP, src, src_gray;
+cv::Mat dst, cdst, cdstP, src, src_gray, firstFrame;
 
-const int cameraNo = 0;
+const int cameraNo = 1;
 const int sensitivity_max = 255;
 const int hexagon_area_slider_max_ = 100000;
 
 int hexagon_max_box_area = 10000;
 int hexagon_min_box_area = 100;
+int movement_sensitivity = 0;
+int movement_threshold = 6;
 
 int box_sensitivity_threshold = 20;
-int box_sensitivity_threshold_max = 255;
-
+int box_sensitivity_threshold_max = 120;
 int min_line_length = 20;
+
 int max_line_gap = 15;
 int line_sensitivity_threshold = 10;
 int unti_length = 80;
+int hexagon_length = 70;
+
+bool isMoving = false;
 
 const char *const contour_window = "Contours";
 const char *const source_window = "Source";
 const char *const parameter_window = "Parameters";
 const char *const lines_window = "Detected Lines (in red) - Probabilistic Line Transform";
-
-
 vector<RotatedRect> minRect;
-int frameRate = 10;
+
+
+int delay = 10;
 
 void writeHexagonFile(std::vector<Hexagon> data);
+
+void backgroundSubtraction_callback(int, void *);
+
 void boundingBoxes_callback(int, void *);
 
 void ImageProcessor::setupGUI() {
     namedWindow(parameter_window, WINDOW_FREERATIO);
     namedWindow(contour_window, WINDOW_AUTOSIZE);
     namedWindow(lines_window, WINDOW_AUTOSIZE);
-    createTrackbar("Line Sensitivity Threshold", parameter_window, &line_sensitivity_threshold, sensitivity_max, nullptr);
+    namedWindow("Background Subtracted", WINDOW_AUTOSIZE);
+    createTrackbar("Line Sensitivity Threshold", parameter_window, &line_sensitivity_threshold, sensitivity_max,
+                   nullptr);
     createTrackbar("Max Line Gap", parameter_window, &max_line_gap, sensitivity_max, nullptr);
     createTrackbar("Min Line Length", parameter_window, &min_line_length, sensitivity_max, nullptr);
     createTrackbar("Box Sensitivity:", parameter_window, &box_sensitivity_threshold, box_sensitivity_threshold_max,
                    boundingBoxes_callback);
-    createTrackbar("Area Max", parameter_window, &hexagon_max_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
-    createTrackbar("Area Min", parameter_window, &hexagon_min_box_area, hexagon_area_slider_max_, boundingBoxes_callback);
+    createTrackbar("Threshold subtraction:", parameter_window, &movement_sensitivity, box_sensitivity_threshold_max,
+                   backgroundSubtraction_callback);
+    createTrackbar("Area Max", parameter_window, &hexagon_max_box_area, hexagon_area_slider_max_,
+                   boundingBoxes_callback);
+    createTrackbar("Area Min", parameter_window, &hexagon_min_box_area, hexagon_area_slider_max_,
+                   boundingBoxes_callback);
     createTrackbar("Unit length", parameter_window, &unti_length, sensitivity_max, nullptr);
+    createTrackbar("Hexagon length", parameter_window, &hexagon_length, sensitivity_max, nullptr);
+    createTrackbar("Movement Threshold", parameter_window, &movement_threshold, 20, nullptr);
 }
 
 
-void writeHexagonFile(std::vector<Hexagon> data){
+void writeHexagonFile(std::vector<Hexagon> data) {
     nlohmann::json hexagons = nlohmann::json();
-    for(int i = 0; i < data.size(); i++) {
+    for (int i = 0; i < data.size(); i++) {
         hexagons.push_back(data.at(i).toJSON());
     }
     nlohmann::json json = nlohmann::json();
@@ -71,6 +87,12 @@ void writeHexagonFile(std::vector<Hexagon> data){
     std::ofstream o(print);
     o << json << std::endl;
     o.close();
+}
+
+cv::Point2i calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint){
+    gridPoint.x = point.x * 1/hexagon_length;
+    gridPoint.y = (point.y  - 1/2 * point.x) * 1/hexagon_length;
+    return gridPoint;
 }
 
 
@@ -113,36 +135,41 @@ void ImageProcessor::detectLines() {
         float boxArea = edge1 * edge2;
 
         if (boxArea < hexagon_max_box_area && boxArea > hexagon_min_box_area) {
-            for (size_t i = 0; i < linesP.size(); i++) {
-                Vec4i l = linesP[i];
-                if (minRect[j].boundingRect().contains(Point(l[0], l[1]))) {
-                    line(cdstP, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 3, LINE_AA);
-                    if(!isHexagonCounted){
-                        red = 0;
-                        blue = 0;
-                        green = 0;
-                        /*
-                         sum = 0;
-                        for(int y = 0; y < edge1; y++){
-                            for(int x = 0; x < edge2; x++){
-                                Vec3b pixel = src.at<Vec3b>(static_cast<int>(y + minRect[j].center.y - edge1 / 2),
-                                                            static_cast<int>(x + minRect[j].center.x - edge2 / 2));
-                                red += pixel[2];
-                                green += pixel[1];
-                                blue += pixel[0];
-                                sum++;
-                            }
-                        }
+            if (!isMoving) {
 
-                        red = red / sum;
-                        blue = blue / sum;
-                        green = green / sum;
-                         */
-                        std::stringstream stream;
-                        stream << std::hex << red << std::hex << blue << std::hex << green;
-                        Hexagon hexagon(static_cast<int>(minRect[j].center.x), static_cast<int>(minRect[j].center.y), stream.str());
-                        hexagons.push_back(hexagon);
-                        isHexagonCounted = true;
+                for (size_t i = 0; i < linesP.size(); i++) {
+                    Vec4i l = linesP[i];
+                    if (minRect[j].boundingRect().contains(Point(l[0], l[1]))) {
+                        line(cdstP, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 3, LINE_AA);
+                        if (!isHexagonCounted) {
+                            red = 0;
+                            blue = 0;
+                            green = 0;
+
+                            sum = 0;
+
+                            for (int y = 0; y < edge1; y++) {
+                                for (int x = 0; x < edge2; x++) {
+                                    Vec3b pixel = src.at<Vec3b>(static_cast<int>(y + minRect[j].center.y - edge1 / 2),
+                                                                static_cast<int>(x + minRect[j].center.x - edge2 / 2));
+                                    red += pixel[2];
+                                    green += pixel[1];
+                                    blue += pixel[0];
+                                    sum++;
+                                }
+                            }
+
+                            red = red / sum;
+                            blue = blue / sum;
+                            green = green / sum;
+
+                            std::stringstream stream;
+                            stream << std::hex << red << std::hex << green << std::hex << blue;
+                            cv::Point2i hexCenter = calculateGridPosition(minRect[j].center, Point2i());
+                            Hexagon hexagon(hexCenter.x, hexCenter.y, stream.str());
+                            hexagons.push_back(hexagon);
+                            isHexagonCounted = true;
+                        }
                     }
                 }
             }
@@ -152,6 +179,36 @@ void ImageProcessor::detectLines() {
     writeHexagonFile(hexagons);
     cv::imshow(lines_window, cdstP);
 }
+
+void backgroundSubtraction_callback(int, void *) {
+    Mat *input = &src;
+    Mat mask(input->rows, input->cols, CV_8UC1);
+    cvtColor(*input, mask, CV_RGB2GRAY);
+
+    if (firstFrame.cols == 0) {
+        mask.copyTo(firstFrame);
+    }
+    absdiff(mask, firstFrame, mask);
+    cv::threshold(mask, mask, movement_sensitivity, 255, CV_THRESH_BINARY);
+
+    Moments m = moments(mask, true);
+    Point centerOfMass(m.m10 / m.m00, m.m01 / m.m00);
+
+    Mat output(input->rows, input->cols, CV_8UC3, Scalar(255, 255, 0));
+    input->copyTo(output, mask);
+
+    cv::Rect rect = cv::Rect(mask.cols/2-movement_threshold/2, mask.rows/2-movement_threshold/2, movement_threshold, movement_threshold);
+    circle(mask, centerOfMass, 5, Scalar(0, 0, 255), CV_FILLED);
+
+    if(centerOfMass.inside(rect)) {
+        isMoving = false;
+    } else {
+        isMoving = true;
+    }
+
+    imshow("Background Subtracted", mask);
+}
+
 
 void boundingBoxes_callback(int, void *) {
     RNG rng(12345);
@@ -177,7 +234,8 @@ void boundingBoxes_callback(int, void *) {
         Point2f rect_points[4];
         minRect[i].points(rect_points);
 
-        float boxArea = (Util::euclideanDist(rect_points[0], rect_points[1]) * Util::euclideanDist(rect_points[2], rect_points[3]));
+        float boxArea = (Util::euclideanDist(rect_points[0], rect_points[1]) *
+                         Util::euclideanDist(rect_points[2], rect_points[3]));
 
         if (boxArea < hexagon_max_box_area && boxArea > hexagon_min_box_area) {
             for (int j = 0; j < 4; j++) {
@@ -188,9 +246,9 @@ void boundingBoxes_callback(int, void *) {
     imshow(contour_window, drawing);
 }
 
-int ImageProcessor::run(){
+int ImageProcessor::run() {
     VideoCapture cap(cameraNo); // open the default camera
-    if (!cap.isOpened()){
+    if (!cap.isOpened()) {
         return -1;
     }  // check if we succeeded
     ImageProcessor::setupGUI();
@@ -201,12 +259,13 @@ int ImageProcessor::run(){
         namedWindow(source_window, WINDOW_AUTOSIZE);
         imshow(source_window, src);
 
-        if(ImageProcessor::detectEdges()){
+        if (ImageProcessor::detectEdges()) {
             ImageProcessor::detectLines();
         }
+        backgroundSubtraction_callback(movement_sensitivity, 0);
         boundingBoxes_callback(box_sensitivity_threshold, 0);
 
         // Wait and Exit
-        waitKey(frameRate);
+        waitKey(delay);
     }
 }
