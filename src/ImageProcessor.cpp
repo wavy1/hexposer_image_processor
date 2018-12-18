@@ -4,6 +4,7 @@
 
 #include "ImageProcessor.h"
 #include <iostream>
+#include <shared_mutex>
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/imgproc.hpp"
@@ -27,6 +28,8 @@ int movement_threshold = 6;
 int box_sensitivity_threshold = 20;
 int box_sensitivity_threshold_max = 120;
 int min_line_length = 20;
+int saturation_cast = 2;
+int color_selection_border = 10;
 
 int max_line_gap = 15;
 int line_sensitivity_threshold = 10;
@@ -70,28 +73,29 @@ void ImageProcessor::setupGUI() {
     createTrackbar("Unit length", parameter_window, &unti_length, sensitivity_max, nullptr);
     createTrackbar("Hexagon length", parameter_window, &hexagon_length, sensitivity_max, nullptr);
     createTrackbar("Movement Threshold", parameter_window, &movement_threshold, 20, nullptr);
+    createTrackbar("Saturation Cast", parameter_window, &saturation_cast, sensitivity_max, nullptr);
+    createTrackbar("Color Border", parameter_window, &color_selection_border, 40, nullptr);
 }
 
 
 void writeHexagonFile(std::vector<Hexagon> data) {
-    nlohmann::json hexagons = nlohmann::json();
+    nlohmann::json hexagons = nlohmann::json::array();
     for (int i = 0; i < data.size(); i++) {
         hexagons.push_back(data.at(i).toJSON());
     }
     nlohmann::json json = nlohmann::json();
-    json["hexagons"] = hexagons;
+    json["Hexagons"] = hexagons;
     std::string print = "";
-    print.append("./pretty");
-    print.append(std::to_string(0));
+    print.append("./info");
     print.append(".json");
     std::ofstream o(print);
     o << json << std::endl;
     o.close();
 }
 
-cv::Point2i calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint){
-    gridPoint.x = point.x * 1/hexagon_length;
-    gridPoint.y = (point.y  - 1/2 * point.x) * 1/hexagon_length;
+cv::Point2i calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint) {
+    gridPoint.x = point.x * 1 / hexagon_length;
+    gridPoint.y = (point.y - 1 / 2 * point.x) * 1 / hexagon_length;
     return gridPoint;
 }
 
@@ -140,7 +144,6 @@ void ImageProcessor::detectLines() {
                 for (size_t i = 0; i < linesP.size(); i++) {
                     Vec4i l = linesP[i];
                     if (minRect[j].boundingRect().contains(Point(l[0], l[1]))) {
-                        line(cdstP, Point(l[0], l[1]), Point(l[2], l[3]), Scalar(0, 0, 255), 3, LINE_AA);
                         if (!isHexagonCounted) {
                             red = 0;
                             blue = 0;
@@ -148,20 +151,26 @@ void ImageProcessor::detectLines() {
 
                             sum = 0;
 
-                            for (int y = 0; y < edge1; y++) {
-                                for (int x = 0; x < edge2; x++) {
-                                    Vec3b pixel = src.at<Vec3b>(static_cast<int>(y + minRect[j].center.y - edge1 / 2),
-                                                                static_cast<int>(x + minRect[j].center.x - edge2 / 2));
+                            for (int y = color_selection_border; y < edge1 - color_selection_border; y++) {
+                                for (int x = color_selection_border; x < edge2 - color_selection_border; x++) {
+                                    int posX = static_cast<int>(y + minRect[j].center.y - edge1 / 2);
+                                    int posY = static_cast<int>(x + minRect[j].center.x - edge2 / 2);
+                                    Vec3b pixel = src.at<Vec3b>(posX, posY);
                                     red += pixel[2];
                                     green += pixel[1];
                                     blue += pixel[0];
                                     sum++;
+                                    cdstP.at<Vec3b>(posX, posY) = pixel;
                                 }
                             }
 
                             red = red / sum;
                             blue = blue / sum;
                             green = green / sum;
+
+                            red = red + (255 - red) * saturation_cast / 255;
+                            blue = blue + (255 - blue) * saturation_cast / 255;
+                            green = green + (255 - green) * saturation_cast / 255;
 
                             std::stringstream stream;
                             stream << std::hex << red << std::hex << green << std::hex << blue;
@@ -197,10 +206,11 @@ void backgroundSubtraction_callback(int, void *) {
     Mat output(input->rows, input->cols, CV_8UC3, Scalar(255, 255, 0));
     input->copyTo(output, mask);
 
-    cv::Rect rect = cv::Rect(mask.cols/2-movement_threshold/2, mask.rows/2-movement_threshold/2, movement_threshold, movement_threshold);
+    cv::Rect rect = cv::Rect(mask.cols / 2 - movement_threshold / 2, mask.rows / 2 - movement_threshold / 2,
+                             movement_threshold, movement_threshold);
     circle(mask, centerOfMass, 5, Scalar(0, 0, 255), CV_FILLED);
 
-    if(centerOfMass.inside(rect)) {
+    if (centerOfMass.inside(rect)) {
         isMoving = false;
     } else {
         isMoving = true;
