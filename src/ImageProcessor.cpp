@@ -4,6 +4,7 @@
 
 #include "ImageProcessor.h"
 #include <iostream>
+#include <iomanip>
 #include <shared_mutex>
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/highgui.hpp"
@@ -20,12 +21,12 @@ const int cameraNo = 1;
 const int sensitivity_max = 255;
 const int hexagon_area_slider_max_ = 100000;
 
-int hexagon_max_box_area = 10000;
-int hexagon_min_box_area = 100;
+int hexagon_max_box_area = 74000;
+int hexagon_min_box_area = 4110;
 int movement_sensitivity = 0;
-int movement_threshold = 6;
+int movement_threshold = 0;
 
-int box_sensitivity_threshold = 20;
+int box_sensitivity_threshold = 56;
 int box_sensitivity_threshold_max = 120;
 int min_line_length = 20;
 int saturation_cast = 2;
@@ -34,30 +35,56 @@ int color_selection_border = 10;
 int max_line_gap = 15;
 int line_sensitivity_threshold = 10;
 int unti_length = 80;
-int hexagon_length = 70;
+int hexagon_length = 80;
 
 bool isMoving = false;
+
+std::vector<Hexagon> hexagons;
 
 const char *const contour_window = "Contours";
 const char *const source_window = "Source";
 const char *const parameter_window = "Parameters";
 const char *const lines_window = "Detected Lines (in red) - Probabilistic Line Transform";
+const char *const background_subtract_window = "Background Subtracted";
 vector<RotatedRect> minRect;
 
 
 int delay = 10;
 
-void writeHexagonFile(std::vector<Hexagon> data);
-
 void backgroundSubtraction_callback(int, void *);
 
 void boundingBoxes_callback(int, void *);
+
+int ImageProcessor::run() {
+    VideoCapture cap(cameraNo); // open the default camera
+    if (!cap.isOpened()) {
+        return -1;
+    }  // check if we succeeded
+    ImageProcessor::setupGUI();
+
+    for (;;) {
+        cap >> src;
+        // Show results
+        namedWindow(source_window, WINDOW_AUTOSIZE);
+        imshow(source_window, src);
+
+        if (ImageProcessor::detectEdges()) {
+            ImageProcessor::detectLines();
+
+        }
+        backgroundSubtraction_callback(movement_sensitivity, 0);
+        boundingBoxes_callback(box_sensitivity_threshold, 0);
+
+        // Wait and Exit
+        waitKey(delay);
+    }
+}
 
 void ImageProcessor::setupGUI() {
     namedWindow(parameter_window, WINDOW_FREERATIO);
     namedWindow(contour_window, WINDOW_AUTOSIZE);
     namedWindow(lines_window, WINDOW_AUTOSIZE);
-    namedWindow("Background Subtracted", WINDOW_AUTOSIZE);
+    namedWindow(background_subtract_window, WINDOW_AUTOSIZE);
     createTrackbar("Line Sensitivity Threshold", parameter_window, &line_sensitivity_threshold, sensitivity_max,
                    nullptr);
     createTrackbar("Max Line Gap", parameter_window, &max_line_gap, sensitivity_max, nullptr);
@@ -66,19 +93,17 @@ void ImageProcessor::setupGUI() {
                    boundingBoxes_callback);
     createTrackbar("Threshold subtraction:", parameter_window, &movement_sensitivity, box_sensitivity_threshold_max,
                    backgroundSubtraction_callback);
-    createTrackbar("Area Max", parameter_window, &hexagon_max_box_area, hexagon_area_slider_max_,
-                   boundingBoxes_callback);
-    createTrackbar("Area Min", parameter_window, &hexagon_min_box_area, hexagon_area_slider_max_,
-                   boundingBoxes_callback);
+    createTrackbar("Area Max", parameter_window, &hexagon_max_box_area, hexagon_area_slider_max_, nullptr);
+    createTrackbar("Area Min", parameter_window, &hexagon_min_box_area, hexagon_area_slider_max_, nullptr);
     createTrackbar("Unit length", parameter_window, &unti_length, sensitivity_max, nullptr);
     createTrackbar("Hexagon length", parameter_window, &hexagon_length, sensitivity_max, nullptr);
-    createTrackbar("Movement Threshold", parameter_window, &movement_threshold, 20, nullptr);
+    createTrackbar("Movement Threshold", parameter_window, &movement_threshold, 40, nullptr);
     createTrackbar("Saturation Cast", parameter_window, &saturation_cast, sensitivity_max, nullptr);
     createTrackbar("Color Border", parameter_window, &color_selection_border, 40, nullptr);
 }
 
 
-void writeHexagonFile(std::vector<Hexagon> data) {
+void ImageProcessor::writeHexagonFile(std::vector<Hexagon> data) {
     nlohmann::json hexagons = nlohmann::json::array();
     for (int i = 0; i < data.size(); i++) {
         hexagons.push_back(data.at(i).toJSON());
@@ -91,12 +116,6 @@ void writeHexagonFile(std::vector<Hexagon> data) {
     std::ofstream o(print);
     o << json << std::endl;
     o.close();
-}
-
-cv::Point2i calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint) {
-    gridPoint.x = point.x * 1 / hexagon_length;
-    gridPoint.y = (point.y - 1 / 2 * point.x) * 1 / hexagon_length;
-    return gridPoint;
 }
 
 
@@ -116,12 +135,8 @@ bool ImageProcessor::detectEdges() {
 void ImageProcessor::detectLines() {
     std::vector<Hexagon> hexagons = std::vector<Hexagon>();
     bool isHexagonCounted = false;
-    vector<Vec4i> linesP; // will hold the results of the detection
-    HoughLinesP(dst, linesP, 30, CV_PI / 180, line_sensitivity_threshold, min_line_length,
-                max_line_gap); // runs the actual detection
     cdstP = cdst.clone();
 
-    string print = "";
     Scalar color;
     int red;
     int blue;
@@ -130,6 +145,7 @@ void ImageProcessor::detectLines() {
 
     // Draw the lines
     for (size_t j = 0; j < minRect.size(); j++) {
+        cout << minRect.size() << endl;
 
         Point2f rect_points[4];
         minRect[j].points(rect_points);
@@ -140,46 +156,46 @@ void ImageProcessor::detectLines() {
 
         if (boxArea < hexagon_max_box_area && boxArea > hexagon_min_box_area) {
             if (!isMoving) {
+                Hexagon hexagon;
+                cv::Point2i hexCenter;
 
-                for (size_t i = 0; i < linesP.size(); i++) {
-                    Vec4i l = linesP[i];
-                    if (minRect[j].boundingRect().contains(Point(l[0], l[1]))) {
-                        if (!isHexagonCounted) {
-                            red = 0;
-                            blue = 0;
-                            green = 0;
 
-                            sum = 0;
+                if (!isHexagonCounted) {
+                    red = 0;
+                    blue = 0;
+                    green = 0;
 
-                            for (int y = color_selection_border; y < edge1 - color_selection_border; y++) {
-                                for (int x = color_selection_border; x < edge2 - color_selection_border; x++) {
-                                    int posX = static_cast<int>(y + minRect[j].center.y - edge1 / 2);
-                                    int posY = static_cast<int>(x + minRect[j].center.x - edge2 / 2);
-                                    Vec3b pixel = src.at<Vec3b>(posX, posY);
-                                    red += pixel[2];
-                                    green += pixel[1];
-                                    blue += pixel[0];
-                                    sum++;
-                                    cdstP.at<Vec3b>(posX, posY) = pixel;
-                                }
-                            }
+                    sum = 0;
 
-                            red = red / sum;
-                            blue = blue / sum;
-                            green = green / sum;
-
-                            red = red + (255 - red) * saturation_cast / 255;
-                            blue = blue + (255 - blue) * saturation_cast / 255;
-                            green = green + (255 - green) * saturation_cast / 255;
-
-                            std::stringstream stream;
-                            stream << std::hex << red << std::hex << green << std::hex << blue;
-                            cv::Point2i hexCenter = calculateGridPosition(minRect[j].center, Point2i());
-                            Hexagon hexagon(hexCenter.x, hexCenter.y, stream.str());
-                            hexagons.push_back(hexagon);
-                            isHexagonCounted = true;
+                    for (int y = color_selection_border; y < edge1 - color_selection_border; y++) {
+                        for (int x = color_selection_border; x < edge2 - color_selection_border; x++) {
+                            int posX = static_cast<int>(y + minRect[j].center.y - edge1 / 2);
+                            int posY = static_cast<int>(x + minRect[j].center.x - edge2 / 2);
+                            Vec3b pixel = src.at<Vec3b>(posX, posY);
+                            red += pixel[2];
+                            green += pixel[1];
+                            blue += pixel[0];
+                            sum++;
+                            cdstP.at<Vec3b>(posX, posY) = pixel;
                         }
                     }
+
+                    red = red / sum;
+                    blue = blue / sum;
+                    green = green / sum;
+
+                    std::stringstream stream;
+                    stream << setfill('0') << setw(2) << std::hex << red;
+                    stream << setfill('0') << setw(2) << std::hex << green;
+                    stream << setfill('0') << setw(2) << std::hex << blue;
+                    hexagon.setColor(stream.str());
+
+                    hexCenter = hexagon.calculateGridPosition(minRect[j].center, hexCenter, hexagon_length);
+                    hexagon.setX(hexCenter.x);
+                    hexagon.setY(hexCenter.y);
+
+                    hexagons.push_back(hexagon);
+                    isHexagonCounted = true;
                 }
             }
         }
@@ -201,7 +217,7 @@ void backgroundSubtraction_callback(int, void *) {
     cv::threshold(mask, mask, movement_sensitivity, 255, CV_THRESH_BINARY);
 
     Moments m = moments(mask, true);
-    Point centerOfMass(m.m10 / m.m00, m.m01 / m.m00);
+    Point centerOfMass(static_cast<int>(m.m10 / m.m00), static_cast<int>(m.m01 / m.m00));
 
     Mat output(input->rows, input->cols, CV_8UC3, Scalar(255, 255, 0));
     input->copyTo(output, mask);
@@ -210,11 +226,7 @@ void backgroundSubtraction_callback(int, void *) {
                              movement_threshold, movement_threshold);
     circle(mask, centerOfMass, 5, Scalar(0, 0, 255), CV_FILLED);
 
-    if (centerOfMass.inside(rect)) {
-        isMoving = false;
-    } else {
-        isMoving = true;
-    }
+    isMoving = !centerOfMass.inside(rect);
 
     imshow("Background Subtracted", mask);
 }
@@ -227,7 +239,7 @@ void boundingBoxes_callback(int, void *) {
     vector<Vec4i> hierarchy;
     threshold(src_gray, threshold_output, box_sensitivity_threshold, 255, THRESH_BINARY);
     findContours(threshold_output, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0));
-    minRect = vector<RotatedRect>(contours.size());
+    minRect = vector<RotatedRect>(contours.size ());
     vector<RotatedRect> minEllipse(contours.size());
     for (size_t i = 0; i < contours.size(); i++) {
         minRect[i] = minAreaRect(contours[i]);
@@ -254,28 +266,4 @@ void boundingBoxes_callback(int, void *) {
         }
     }
     imshow(contour_window, drawing);
-}
-
-int ImageProcessor::run() {
-    VideoCapture cap(cameraNo); // open the default camera
-    if (!cap.isOpened()) {
-        return -1;
-    }  // check if we succeeded
-    ImageProcessor::setupGUI();
-
-    for (;;) {
-        cap >> src;
-        // Show results
-        namedWindow(source_window, WINDOW_AUTOSIZE);
-        imshow(source_window, src);
-
-        if (ImageProcessor::detectEdges()) {
-            ImageProcessor::detectLines();
-        }
-        backgroundSubtraction_callback(movement_sensitivity, 0);
-        boundingBoxes_callback(box_sensitivity_threshold, 0);
-
-        // Wait and Exit
-        waitKey(delay);
-    }
 }

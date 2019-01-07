@@ -28,11 +28,7 @@ void Hexagon::setColor(const std::string &color) {
     Hexagon::color = color;
 }
 
-Hexagon::Hexagon(int x, int y, const std::string &color) : x(x), y(y), color(color) {
-    this->color = color;
-    this->x = x;
-    this->y = y;
-}
+Hexagon::Hexagon() {}
 
 nlohmann::json Hexagon::toJSON() {
     nlohmann::json hex = {
@@ -42,6 +38,12 @@ nlohmann::json Hexagon::toJSON() {
 
     };
     return hex;
+}
+
+cv::Point2i Hexagon::calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint, int hexagon_length) {
+    gridPoint.x = point.x * 1 / hexagon_length;
+    gridPoint.y = (point.y - 1 / 2 * point.x) * 1 / hexagon_length;
+    return gridPoint;
 }
 
 

@@ -15,6 +15,7 @@ public:
     void detectLines();
     bool detectEdges();
     int run();
+    void writeHexagonFile(std::vector<Hexagon> data);
 };
 
 
