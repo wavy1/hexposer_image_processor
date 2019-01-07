@@ -39,7 +39,7 @@ int hexagon_length = 80;
 
 bool isMoving = false;
 
-std::vector<Hexagon> hexagons;
+std::vector<Hexagon> hexagons1;
 
 const char *const contour_window = "Contours";
 const char *const source_window = "Source";
@@ -47,7 +47,6 @@ const char *const parameter_window = "Parameters";
 const char *const lines_window = "Detected Lines (in red) - Probabilistic Line Transform";
 const char *const background_subtract_window = "Background Subtracted";
 vector<RotatedRect> minRect;
-
 
 int delay = 10;
 
@@ -59,23 +58,24 @@ int ImageProcessor::run() {
     VideoCapture cap(cameraNo); // open the default camera
     if (!cap.isOpened()) {
         return -1;
-    }  // check if we succeeded
+    }
     ImageProcessor::setupGUI();
 
     for (;;) {
         cap >> src;
+
         // Show results
         namedWindow(source_window, WINDOW_AUTOSIZE);
         imshow(source_window, src);
 
         if (ImageProcessor::detectEdges()) {
-            ImageProcessor::detectLines();
-
+            ImageProcessor::analyzeHexagons();
+            backgroundSubtraction_callback(movement_sensitivity, 0);
+            boundingBoxes_callback(box_sensitivity_threshold, 0);
         }
-        backgroundSubtraction_callback(movement_sensitivity, 0);
-        boundingBoxes_callback(box_sensitivity_threshold, 0);
 
         // Wait and Exit
+        writeHexagonFile(hexagons1);
         waitKey(delay);
     }
 }
@@ -114,13 +114,14 @@ void ImageProcessor::writeHexagonFile(std::vector<Hexagon> data) {
     print.append("./info");
     print.append(".json");
     std::ofstream o(print);
+
     o << json << std::endl;
     o.close();
 }
 
 
 bool ImageProcessor::detectEdges() {
-    // Edge detection
+    // Edge detection, not relevant for
     Canny(src, dst, 50, 200, 3);
 
     cvtColor(src, src_gray, COLOR_BGR2GRAY);
@@ -132,20 +133,18 @@ bool ImageProcessor::detectEdges() {
     return true;
 }
 
-void ImageProcessor::detectLines() {
+void ImageProcessor::analyzeHexagons() {
     std::vector<Hexagon> hexagons = std::vector<Hexagon>();
-    bool isHexagonCounted = false;
     cdstP = cdst.clone();
 
     Scalar color;
-    int red;
-    int blue;
-    int green;
-    int sum;
+    int red = 0;
+    int blue = 0;
+    int green = 0;
+    int sum = 0;
 
     // Draw the lines
     for (size_t j = 0; j < minRect.size(); j++) {
-        cout << minRect.size() << endl;
 
         Point2f rect_points[4];
         minRect[j].points(rect_points);
@@ -157,52 +156,51 @@ void ImageProcessor::detectLines() {
         if (boxArea < hexagon_max_box_area && boxArea > hexagon_min_box_area) {
             if (!isMoving) {
                 Hexagon hexagon;
-                cv::Point2i hexCenter;
-
-
-                if (!isHexagonCounted) {
-                    red = 0;
-                    blue = 0;
-                    green = 0;
-
-                    sum = 0;
-
-                    for (int y = color_selection_border; y < edge1 - color_selection_border; y++) {
-                        for (int x = color_selection_border; x < edge2 - color_selection_border; x++) {
-                            int posX = static_cast<int>(y + minRect[j].center.y - edge1 / 2);
-                            int posY = static_cast<int>(x + minRect[j].center.x - edge2 / 2);
-                            Vec3b pixel = src.at<Vec3b>(posX, posY);
-                            red += pixel[2];
-                            green += pixel[1];
-                            blue += pixel[0];
-                            sum++;
-                            cdstP.at<Vec3b>(posX, posY) = pixel;
-                        }
-                    }
-
-                    red = red / sum;
-                    blue = blue / sum;
-                    green = green / sum;
-
-                    std::stringstream stream;
-                    stream << setfill('0') << setw(2) << std::hex << red;
-                    stream << setfill('0') << setw(2) << std::hex << green;
-                    stream << setfill('0') << setw(2) << std::hex << blue;
-                    hexagon.setColor(stream.str());
-
-                    hexCenter = hexagon.calculateGridPosition(minRect[j].center, hexCenter, hexagon_length);
-                    hexagon.setX(hexCenter.x);
-                    hexagon.setY(hexCenter.y);
-
-                    hexagons.push_back(hexagon);
-                    isHexagonCounted = true;
-                }
+                calcHexagonColor(red, blue, green, sum, edge1, edge2, &minRect[j], &hexagon);
+                calcHexagonPosition(&minRect[j], &hexagon);
+                hexagons.push_back(hexagon);
             }
         }
-        isHexagonCounted = false;
     }
-    writeHexagonFile(hexagons);
+    hexagons1 = hexagons;
     cv::imshow(lines_window, cdstP);
+}
+
+void
+ImageProcessor::calcHexagonColor(int red, int blue, int green, int sum, float edge1, float edge2, cv::RotatedRect *rect,
+                                 Hexagon *hexagon) {
+    red = 0;
+    blue = 0;
+    green = 0;
+    sum = 0;
+    for (int y = color_selection_border; y < edge1 - color_selection_border; y++) {
+        for (int x = color_selection_border; x < edge2 - color_selection_border; x++) {
+            int posX = static_cast<int>(y + rect->center.y - edge1 / 2);
+            int posY = static_cast<int>(x + rect->center.x - edge2 / 2);
+            Vec3b pixel = src.at<Vec3b>(posX, posY);
+            red += pixel[2];
+            green += pixel[1];
+            blue += pixel[0];
+            sum++;
+            cdstP.at<Vec3b>(posX, posY) = pixel;
+        }
+    }
+    red = red / sum;
+    blue = blue / sum;
+    green = green / sum;
+    std::stringstream stream;
+    stream << setfill('0') << setw(2) << std::hex << red;
+    stream << setfill('0') << setw(2) << std::hex << green;
+    stream << setfill('0') << setw(2) << std::hex << blue;
+    hexagon->setColor(stream.str());
+}
+
+// Calculates the Position of
+void ImageProcessor::calcHexagonPosition(cv::RotatedRect *rect, Hexagon *hexagon) {
+    cv::Point2i gridPosition;
+    gridPosition = hexagon->mapScreenToGridPosition(rect->center, gridPosition, hexagon_length);
+    hexagon->setX(gridPosition.x);
+    hexagon->setY(gridPosition.y);
 }
 
 void backgroundSubtraction_callback(int, void *) {
@@ -215,19 +213,14 @@ void backgroundSubtraction_callback(int, void *) {
     }
     absdiff(mask, firstFrame, mask);
     cv::threshold(mask, mask, movement_sensitivity, 255, CV_THRESH_BINARY);
-
     Moments m = moments(mask, true);
     Point centerOfMass(static_cast<int>(m.m10 / m.m00), static_cast<int>(m.m01 / m.m00));
-
     Mat output(input->rows, input->cols, CV_8UC3, Scalar(255, 255, 0));
     input->copyTo(output, mask);
-
     cv::Rect rect = cv::Rect(mask.cols / 2 - movement_threshold / 2, mask.rows / 2 - movement_threshold / 2,
                              movement_threshold, movement_threshold);
     circle(mask, centerOfMass, 5, Scalar(0, 0, 255), CV_FILLED);
-
     isMoving = !centerOfMass.inside(rect);
-
     imshow("Background Subtracted", mask);
 }
 
@@ -239,7 +232,8 @@ void boundingBoxes_callback(int, void *) {
     vector<Vec4i> hierarchy;
     threshold(src_gray, threshold_output, box_sensitivity_threshold, 255, THRESH_BINARY);
     findContours(threshold_output, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0));
-    minRect = vector<RotatedRect>(contours.size ());
+    minRect = vector<RotatedRect>(contours.size());
+    vector<RotatedRect> hexagonsWithRightSize;
     vector<RotatedRect> minEllipse(contours.size());
     for (size_t i = 0; i < contours.size(); i++) {
         minRect[i] = minAreaRect(contours[i]);
@@ -260,10 +254,14 @@ void boundingBoxes_callback(int, void *) {
                          Util::euclideanDist(rect_points[2], rect_points[3]));
 
         if (boxArea < hexagon_max_box_area && boxArea > hexagon_min_box_area) {
+            hexagonsWithRightSize.push_back(minRect[i]);
             for (int j = 0; j < 4; j++) {
                 line(drawing, rect_points[j], rect_points[(j + 1) % 4], color, 1, 8);
             }
         }
+    }
+    if (!isMoving) {
+        minRect = hexagonsWithRightSize;
     }
     imshow(contour_window, drawing);
 }

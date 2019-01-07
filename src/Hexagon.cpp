@@ -40,7 +40,7 @@ nlohmann::json Hexagon::toJSON() {
     return hex;
 }
 
-cv::Point2i Hexagon::calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint, int hexagon_length) {
+cv::Point2i Hexagon::mapScreenToGridPosition(cv::Point2i point, cv::Point2i gridPoint, int hexagon_length) {
     gridPoint.x = point.x * 1 / hexagon_length;
     gridPoint.y = (point.y - 1 / 2 * point.x) * 1 / hexagon_length;
     return gridPoint;

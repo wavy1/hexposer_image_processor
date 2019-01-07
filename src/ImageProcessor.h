@@ -12,10 +12,13 @@
 class ImageProcessor{
 public:
     void setupGUI();
-    void detectLines();
+    void analyzeHexagons();
     bool detectEdges();
     int run();
     void writeHexagonFile(std::vector<Hexagon> data);
+private:
+    void calcHexagonColor(int red, int blue, int green, int sum, float edge1, float edge2, cv::RotatedRect *rect, Hexagon *hexagon);
+    void calcHexagonPosition(cv::RotatedRect *rect, Hexagon *hexagon);
 };
 
 

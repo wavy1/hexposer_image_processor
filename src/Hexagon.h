@@ -20,7 +20,7 @@ public:
     const std::string &getColor() const;
     void setColor(const std::string &color);
     nlohmann::json toJSON();
-    cv::Point2i calculateGridPosition(cv::Point2i point, cv::Point2i gridPoint, int hexagon_length);
+    cv::Point2i mapScreenToGridPosition(cv::Point2i point, cv::Point2i gridPoint, int hexagon_length);
 
 private:
     int x;
