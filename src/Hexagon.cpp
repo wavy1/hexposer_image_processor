@@ -30,6 +30,10 @@ void Hexagon::setColor(const std::string &color) {
 
 Hexagon::Hexagon() {}
 
+/**
+ * Casts the Hexagon in a json notation hexagon
+ * @return json hexagon
+ */
 nlohmann::json Hexagon::toJSON() {
     nlohmann::json hex = {
                     {"color", color},
@@ -40,10 +44,17 @@ nlohmann::json Hexagon::toJSON() {
     return hex;
 }
 
-cv::Point2i Hexagon::mapScreenToGridPosition(cv::Point2i point, cv::Point2i gridPoint, int hexagon_length) {
-    gridPoint.x = point.x * 1 / hexagon_length;
-    gridPoint.y = (point.y - 1 / 2 * point.x) * 1 / hexagon_length;
-    return gridPoint;
+/**
+ * Mapping function to calculate the gridPosition from the screenPosition
+ * @param screenPosition : Position on the Screen, consists of x and y component
+ * @param gridPosition : Position on the Grid, consist of x and y component
+ * @param hexagon_length : Length of a hexagon
+ * @return gridPosition
+ */
+cv::Point2i Hexagon::mapScreenToGridPosition(cv::Point2i screenPosition, cv::Point2i gridPosition, int hexagon_length) {
+    gridPosition.x = screenPosition.x * 1 / hexagon_length;
+    gridPosition.y = (screenPosition.y - 1 / 2 * screenPosition.x) * 1 / hexagon_length;
+    return gridPosition;
 }
 
 

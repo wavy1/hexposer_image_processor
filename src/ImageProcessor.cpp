@@ -17,29 +17,26 @@ using namespace std;
 // Declare the output variables
 cv::Mat dst, cdst, cdstP, src, src_gray, firstFrame;
 
-const int cameraNo = 1;
-const int sensitivity_max = 255;
-const int hexagon_area_slider_max_ = 100000;
+const int cameraNo = 0;                             // Choose the camera
+const int sensitivity_max = 255;                    // Value used for an upper border
+const int hexagon_area_slider_max_ = 100000;        // Another Value, for an upper border
 
-int hexagon_max_box_area = 74000;
-int hexagon_min_box_area = 4110;
-int movement_sensitivity = 0;
-int movement_threshold = 0;
+int hexagon_max_box_area = 50000;                   // Variable for maximal hexagon area, to be detected
+int hexagon_min_box_area = 2000;                    // Variable for minimal hexagon area, to be detected
 
-int box_sensitivity_threshold = 56;
-int box_sensitivity_threshold_max = 120;
-int min_line_length = 20;
-int saturation_cast = 2;
-int color_selection_border = 10;
+int movement_sensitivity = 0;                       // Variable for how sensitive the movement is detected
+int movement_threshold = 0;                         // Variable for the threshold, recognizes the movement
 
-int max_line_gap = 15;
-int line_sensitivity_threshold = 10;
-int unti_length = 80;
-int hexagon_length = 80;
+int box_sensitivity_threshold = 56;                 // Variable for the sensitivity threshold, for which a box is recognized
+int box_sensitivity_threshold_max = 120;            // Upper border the box sensitivity can be, for detecting a box
+int saturation_cast = 2;                            // Variable for saturation
+int color_selection_border = 10;                    // Variable for downsizing the area, where the colour is calculated
 
-bool isMoving = false;
+int hexagon_length = 80;                            // The set Length of a single hexagon, by size
 
-std::vector<Hexagon> hexagons1;
+bool isMoving = false;                              // Movement detected by background subtraction
+
+std::vector<Hexagon> hexagonsData;                  // Functions of this component write into this data variable, so it can be overwritten
 
 const char *const contour_window = "Contours";
 const char *const source_window = "Source";
@@ -52,8 +49,12 @@ int delay = 10;
 
 void backgroundSubtraction_callback(int, void *);
 
-void boundingBoxes_callback(int, void *);
+void detectBoxes_callback(int, void *);
 
+/**
+ * Camera access, gui setup and main Loop
+ * @return
+ */
 int ImageProcessor::run() {
     VideoCapture cap(cameraNo); // open the default camera
     if (!cap.isOpened()) {
@@ -61,48 +62,49 @@ int ImageProcessor::run() {
     }
     ImageProcessor::setupGUI();
 
+    // Main Loop
     for (;;) {
         cap >> src;
 
-        // Show results
         namedWindow(source_window, WINDOW_AUTOSIZE);
         imshow(source_window, src);
 
         if (ImageProcessor::detectEdges()) {
             ImageProcessor::analyzeHexagons();
-            backgroundSubtraction_callback(movement_sensitivity, 0);
-            boundingBoxes_callback(box_sensitivity_threshold, 0);
+            detectBoxes_callback(box_sensitivity_threshold, 0);
         }
+        backgroundSubtraction_callback(movement_sensitivity, 0);
 
         // Wait and Exit
-        writeHexagonFile(hexagons1);
+        writeHexagonFile(hexagonsData);
         waitKey(delay);
     }
 }
 
+/**
+ * Seting up the Gui here, with the windows and sliders
+ */
 void ImageProcessor::setupGUI() {
     namedWindow(parameter_window, WINDOW_FREERATIO);
     namedWindow(contour_window, WINDOW_AUTOSIZE);
     namedWindow(lines_window, WINDOW_AUTOSIZE);
     namedWindow(background_subtract_window, WINDOW_AUTOSIZE);
-    createTrackbar("Line Sensitivity Threshold", parameter_window, &line_sensitivity_threshold, sensitivity_max,
-                   nullptr);
-    createTrackbar("Max Line Gap", parameter_window, &max_line_gap, sensitivity_max, nullptr);
-    createTrackbar("Min Line Length", parameter_window, &min_line_length, sensitivity_max, nullptr);
     createTrackbar("Box Sensitivity:", parameter_window, &box_sensitivity_threshold, box_sensitivity_threshold_max,
-                   boundingBoxes_callback);
+                   detectBoxes_callback);
     createTrackbar("Threshold subtraction:", parameter_window, &movement_sensitivity, box_sensitivity_threshold_max,
                    backgroundSubtraction_callback);
     createTrackbar("Area Max", parameter_window, &hexagon_max_box_area, hexagon_area_slider_max_, nullptr);
     createTrackbar("Area Min", parameter_window, &hexagon_min_box_area, hexagon_area_slider_max_, nullptr);
-    createTrackbar("Unit length", parameter_window, &unti_length, sensitivity_max, nullptr);
     createTrackbar("Hexagon length", parameter_window, &hexagon_length, sensitivity_max, nullptr);
     createTrackbar("Movement Threshold", parameter_window, &movement_threshold, 40, nullptr);
     createTrackbar("Saturation Cast", parameter_window, &saturation_cast, sensitivity_max, nullptr);
     createTrackbar("Color Border", parameter_window, &color_selection_border, 40, nullptr);
 }
 
-
+/**
+ * Write the Hexagon .json file, with the nlohmann json library
+ * @param data
+ */
 void ImageProcessor::writeHexagonFile(std::vector<Hexagon> data) {
     nlohmann::json hexagons = nlohmann::json::array();
     for (int i = 0; i < data.size(); i++) {
@@ -119,20 +121,25 @@ void ImageProcessor::writeHexagonFile(std::vector<Hexagon> data) {
     o.close();
 }
 
-
+/**
+ *  Detect the edges of the source frame and return true, when no error has occurred
+ */
 bool ImageProcessor::detectEdges() {
-    // Edge detection, not relevant for
+
     Canny(src, dst, 50, 200, 3);
 
     cvtColor(src, src_gray, COLOR_BGR2GRAY);
     blur(src_gray, src_gray, Size(3, 3));
 
     // Copy edges to the images that will display the results in BGR
-    // Probabilistic Line Transform
     cvtColor(dst, cdst, COLOR_GRAY2BGR);
     return true;
 }
 
+/**
+ * Get the edges of the boxes, specify the area of hexagon,
+ * then calculate color and set the center box position as hexagon.position
+ */
 void ImageProcessor::analyzeHexagons() {
     std::vector<Hexagon> hexagons = std::vector<Hexagon>();
     cdstP = cdst.clone();
@@ -162,10 +169,21 @@ void ImageProcessor::analyzeHexagons() {
             }
         }
     }
-    hexagons1 = hexagons;
+    hexagonsData = hexagons;
     cv::imshow(lines_window, cdstP);
 }
 
+/**
+ * Function to calculate the Hexagon color
+ * @param red : Red channel for pixel
+ * @param blue : Blue channel for pixel
+ * @param green : Green channel for pixel
+ * @param sum : Variable into which, the sum will be written to
+ * @param edge1 : The euclidianDistance of one edge of *rect
+ * @param edge2 : The euclidianDistance of the perpendicilar edge
+ * @param rect : Visible rect on the capturing material
+ * @param hexagon : Hexagon pointer, where the color will be written into
+ */
 void
 ImageProcessor::calcHexagonColor(int red, int blue, int green, int sum, float edge1, float edge2, cv::RotatedRect *rect,
                                  Hexagon *hexagon) {
@@ -195,7 +213,11 @@ ImageProcessor::calcHexagonColor(int red, int blue, int green, int sum, float ed
     hexagon->setColor(stream.str());
 }
 
-// Calculates the Position of
+/**
+ * Maps the center screen rectangle position to the for the frontend relevant grid position
+ * @param rect : The rectagle, that is visible by the image detection
+ * @param hexagon : The Hexagon, that will contain the data
+ */
 void ImageProcessor::calcHexagonPosition(cv::RotatedRect *rect, Hexagon *hexagon) {
     cv::Point2i gridPosition;
     gridPosition = hexagon->mapScreenToGridPosition(rect->center, gridPosition, hexagon_length);
@@ -203,6 +225,10 @@ void ImageProcessor::calcHexagonPosition(cv::RotatedRect *rect, Hexagon *hexagon
     hexagon->setY(gridPosition.y);
 }
 
+/**
+ * This function is relevant for setting the isMoving boolean,
+ * based on the deviation of the movement center form the screen center
+ */
 void backgroundSubtraction_callback(int, void *) {
     Mat *input = &src;
     Mat mask(input->rows, input->cols, CV_8UC1);
@@ -224,8 +250,11 @@ void backgroundSubtraction_callback(int, void *) {
     imshow("Background Subtracted", mask);
 }
 
-
-void boundingBoxes_callback(int, void *) {
+/**
+ *  Detect the Boxes from contours of the src in gray with a threshold,
+ *  that are the basis for the hexagon location and color
+ */
+void detectBoxes_callback(int, void *) {
     RNG rng(12345);
     Mat threshold_output;
     vector<vector<Point> > contours;
@@ -234,18 +263,14 @@ void boundingBoxes_callback(int, void *) {
     findContours(threshold_output, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE, Point(0, 0));
     minRect = vector<RotatedRect>(contours.size());
     vector<RotatedRect> hexagonsWithRightSize;
-    vector<RotatedRect> minEllipse(contours.size());
     for (size_t i = 0; i < contours.size(); i++) {
         minRect[i] = minAreaRect(contours[i]);
-        if (contours[i].size() > 5) { minEllipse[i] = fitEllipse(contours[i]); }
     }
     Mat drawing = Mat::zeros(threshold_output.size(), CV_8UC3);
     for (size_t i = 0; i < contours.size(); i++) {
         Scalar color = Scalar(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
         // contour
         drawContours(drawing, contours, (int) i, color, 1, 8, vector<Vec4i>(), 0, Point());
-        // ellipse
-        ellipse(drawing, minEllipse[i], color, 2, 8);
         // rotated rectangle
         Point2f rect_points[4];
         minRect[i].points(rect_points);
